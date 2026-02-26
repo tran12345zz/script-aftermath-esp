@@ -1,0 +1,140 @@
+local players = game:GetService("Players")
+local run_service = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local client = players.LocalPlayer
+
+-- [⚙ CONFIGURATION]
+local aim_settings = {
+    enabled = true,
+    key = Enum.UserInputType.MouseButton2,
+    fov = 200,
+    smoothness = 0.5,
+    predictionX = 1.8,
+    predictionY = 1.2,
+    gravity = 32,
+    defaultBulletSpeed = 2250,
+    headOffset = 1.5,
+    debug = true 
+}
+
+-- [🎨 DRAWING UI]
+local Circle = Drawing.new("Circle")
+Circle.Visible = true
+Circle.Thickness = 1
+Circle.Radius = aim_settings.fov
+Circle.Color = Color3.fromRGB(255, 255, 255)
+Circle.Transparency = 0.5
+
+local status_text = Drawing.new("Text")
+status_text.Visible = aim_settings.debug
+status_text.Size = 18
+status_text.Center = true
+status_text.Outline = true
+
+local debug_line = Drawing.new("Line")
+debug_line.Visible = false
+debug_line.Color = Color3.fromRGB(255, 0, 255)
+debug_line.Thickness = 0.5
+debug_line.Transparency = 0.8
+
+-- [🔍 FUNCTIONS]
+local function isVisible(targetPart)
+    local rayParam = RaycastParams.new()
+    rayParam.FilterDescendantsInstances = {client.Character, targetPart.Parent}
+    rayParam.FilterType = Enum.RaycastFilterType.Exclude
+    
+    local origin = Camera.CFrame.Position
+    local direction = (targetPart.Position - origin)
+    local result = workspace:Raycast(origin, direction, rayParam)
+    
+    return result == nil 
+end
+
+local function getClosestTarget()
+    local target, shortestDist = nil, aim_settings.fov
+    local entities = workspace:FindFirstChild("game_assets") and workspace.game_assets:FindFirstChild("Entities")
+    
+    if entities then
+        for _, entity in pairs(entities:GetChildren()) do
+            local collider = entity:FindFirstChild("ServerCollider")
+            if collider then
+                local screenPoint, onScreen = Camera:WorldToViewportPoint(collider.Position)
+                if onScreen then
+                    local mouseLoc = uis:GetMouseLocation()
+                    local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - mouseLoc).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        target = collider
+                    end
+                end
+            end
+        end
+    end
+    return target
+end
+
+-- [🔄 MAIN LOOP]
+run_service.RenderStepped:Connect(function()
+    local mouseLoc = uis:GetMouseLocation()
+    
+    Circle.Position = mouseLoc
+    status_text.Position = Vector2.new(mouseLoc.X, mouseLoc.Y + 45)
+    
+    local target = getClosestTarget()
+    
+    if target and aim_settings.enabled then
+        local pos = target.Position
+        local screenPoint, onScreen = Camera:WorldToViewportPoint(pos)
+        
+        -- Tính khoảng cách Studs
+        local distance = (Camera.CFrame.Position - pos).Magnitude
+
+        if onScreen and aim_settings.debug then
+            debug_line.Visible = true
+            debug_line.From = mouseLoc
+            debug_line.To = Vector2.new(screenPoint.X, screenPoint.Y)
+        else
+            debug_line.Visible = false
+        end
+
+        local canSee = isVisible(target)
+        if aim_settings.debug then
+            status_text.Visible = true
+            -- THÊM DISTANCE VÀO ĐÂY (%.1f là lấy 1 số thập phân)
+            local distStr = string.format("[%.1f studs]", distance)
+            
+            if canSee then
+                status_text.Text = "TARGET: VISIBLE " .. distStr
+                status_text.Color = Color3.fromRGB(0, 255, 255)
+            else
+                status_text.Text = "TARGET: OBSTRUCTED " .. distStr
+                status_text.Color = Color3.fromRGB(255, 0, 0)
+            end
+        end
+        
+        if uis:IsMouseButtonPressed(aim_settings.key) then
+            local vel = target.Velocity or Vector3.new(0, 0, 0)
+            local speed = aim_settings.defaultBulletSpeed
+            
+            local t = distance / speed
+            local futurePos = pos + Vector3.new(0, aim_settings.headOffset, 0) + (vel * t * aim_settings.predictionX) + Vector3.new(0, aim_settings.gravity * (t^2) * aim_settings.predictionY, 0)
+            
+            local fScreenPoint, fOnScreen = Camera:WorldToViewportPoint(futurePos)
+            if fOnScreen then
+                local dx = (fScreenPoint.X - mouseLoc.X) * aim_settings.smoothness
+                local dy = (fScreenPoint.Y - mouseLoc.Y) * aim_settings.smoothness
+                
+                if typeof(mousemoverel) == "function" then
+                    mousemoverel(dx, dy)
+                end
+            end
+        end
+    else
+        debug_line.Visible = false
+        if aim_settings.debug then
+            status_text.Text = "NO TARGET"
+            status_text.Color = Color3.fromRGB(255, 255, 255)
+        end
+    end
+end)
